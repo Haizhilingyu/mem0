@@ -2034,7 +2034,7 @@ describe("Neptune Analytics – backward compat with mocked client", () => {
     expect(mockClient.send).not.toHaveBeenCalled();
   });
 
-  it("passes custom HTTPS endpoints to the AWS client when graphIdentifier is provided", () => {
+  it("passes custom HTTPS endpoints to the AWS client when graphIdentifier is provided", async () => {
     jest.resetModules();
 
     const neptuneGraphClient = jest.fn().mockReturnValue({
@@ -2056,7 +2056,9 @@ describe("Neptune Analytics – backward compat with mocked client", () => {
       NeptuneAnalyticsVectorStore,
     } = require("../src/vector_stores/neptune_analytics");
 
-    new NeptuneAnalyticsVectorStore({
+    // The AWS client is built lazily on first use, so await initialize() before
+    // asserting how it was constructed.
+    const store = new NeptuneAnalyticsVectorStore({
       graphIdentifier: "g-1234567890",
       endpoint: "https://example.us-east-1.neptune-graph.amazonaws.com",
       collectionName: "test",
@@ -2065,6 +2067,7 @@ describe("Neptune Analytics – backward compat with mocked client", () => {
       profile: "dev-profile",
       maxAttempts: 3,
     });
+    await store.initialize();
 
     expect(neptuneGraphClient).toHaveBeenCalledWith({
       endpoint: "https://example.us-east-1.neptune-graph.amazonaws.com",

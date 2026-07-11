@@ -1,7 +1,3 @@
-import {
-  ExecuteQueryCommand,
-  NeptuneGraphClient,
-} from "@aws-sdk/client-neptune-graph";
 import { VectorStore } from "./base";
 import { SearchFilters, VectorStoreConfig, VectorStoreResult } from "../types";
 
@@ -14,7 +10,7 @@ interface NeptuneAnalyticsConfig extends VectorStoreConfig {
 }
 
 interface NeptuneGraphClientLike {
-  send(command: ExecuteQueryCommand): Promise<NeptuneExecuteQueryOutput>;
+  send(command: any): Promise<NeptuneExecuteQueryOutput>;
 }
 
 interface NeptuneExecuteQueryOutput {
@@ -33,7 +29,9 @@ interface WhereClauseResult {
 }
 
 export class NeptuneAnalyticsVectorStore implements VectorStore {
-  private readonly client: NeptuneGraphClientLike;
+  private readonly config: NeptuneAnalyticsConfig;
+  private client!: NeptuneGraphClientLike;
+  private sdkPromise?: Promise<any>;
   private readonly graphIdentifier: string;
   private readonly collectionName: string;
   private readonly collectionLabel: string;
@@ -46,6 +44,7 @@ export class NeptuneAnalyticsVectorStore implements VectorStore {
   private cachedUserId?: string;
 
   constructor(config: NeptuneAnalyticsConfig) {
+    this.config = config;
     this.graphIdentifier = this.resolveGraphIdentifier(config);
     this.collectionName = config.collectionName || "memories";
     this.collectionLabel = `MEM0_VECTOR_${this.collectionName}`;
@@ -54,8 +53,6 @@ export class NeptuneAnalyticsVectorStore implements VectorStore {
     this.userLabelExpr = this.escapeLabel(this.userLabel);
     this.userNodeId = "mem0-user";
     this.dimension = config.dimension || 1536;
-    this.client =
-      config.client || new NeptuneGraphClient(this.buildClientConfig(config));
 
     void this.initialize().catch(console.error);
   }
@@ -68,7 +65,37 @@ export class NeptuneAnalyticsVectorStore implements VectorStore {
   }
 
   private async _doInitialize(): Promise<void> {
-    return;
+    await this.ensureClient();
+  }
+
+  /**
+   * Lazily import the optional `@aws-sdk/client-neptune-graph` peer so
+   * consumers who never use the Neptune Analytics store don't need it
+   * installed.
+   */
+  private getSdk(): Promise<any> {
+    if (!this.sdkPromise) {
+      this.sdkPromise = import("@aws-sdk/client-neptune-graph").catch(() => {
+        throw new Error(
+          "The '@aws-sdk/client-neptune-graph' package is required to use the Neptune Analytics vector store. Install it with: npm install @aws-sdk/client-neptune-graph",
+        );
+      });
+    }
+    return this.sdkPromise;
+  }
+
+  /** Lazily construct (or reuse) the Neptune Graph client. */
+  private async ensureClient(): Promise<void> {
+    if (this.client) return;
+
+    const config = this.config;
+    if (config.client) {
+      this.client = config.client;
+      return;
+    }
+
+    const sdk = await this.getSdk();
+    this.client = new sdk.NeptuneGraphClient(this.buildClientConfig(config));
   }
 
   async insert(
@@ -989,8 +1016,10 @@ export class NeptuneAnalyticsVectorStore implements VectorStore {
     queryString: string,
     parameters: Record<string, any> = {},
   ): Promise<NeptuneQueryRecord[]> {
+    await this.initialize();
+    const sdk = await this.getSdk();
     const response = await this.client.send(
-      new ExecuteQueryCommand({
+      new sdk.ExecuteQueryCommand({
         graphIdentifier: this.graphIdentifier,
         language: "OPEN_CYPHER",
         queryString,
